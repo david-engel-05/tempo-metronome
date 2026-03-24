@@ -7,11 +7,13 @@ struct BPMControlView: View {
     @State private var isEditingBPM = false
     @State private var bpmInput = ""
     @FocusState private var inputFocused: Bool
+    @State private var tapTimestamps: [Date] = []
 
     var body: some View {
         VStack(spacing: 24) {
             bpmDisplay
             stepperAndSlider
+            tapTempoButton
         }
     }
 
@@ -71,6 +73,47 @@ struct BPMControlView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Tap Tempo
+
+    private var tapTempoButton: some View {
+        Button(action: handleTap) {
+            Text("TAP")
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func handleTap() {
+        let now = Date()
+
+        // Reset if last tap was more than 2 seconds ago
+        if let last = tapTimestamps.last, now.timeIntervalSince(last) > 2.0 {
+            tapTimestamps.removeAll()
+        }
+
+        tapTimestamps.append(now)
+
+        // Rolling window: keep only the last 8 taps
+        if tapTimestamps.count > 8 {
+            tapTimestamps.removeFirst()
+        }
+
+        // Need at least 2 taps to calculate a BPM
+        guard tapTimestamps.count >= 2 else { return }
+
+        // BPM = 60 / average interval between consecutive taps
+        var totalInterval: Double = 0
+        for i in 1..<tapTimestamps.count {
+            totalInterval += tapTimestamps[i].timeIntervalSince(tapTimestamps[i - 1])
+        }
+        let averageInterval = totalInterval / Double(tapTimestamps.count - 1)
+        engine.updateBPM(60.0 / averageInterval)
     }
 
     // MARK: - Editing
