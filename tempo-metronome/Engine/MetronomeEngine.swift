@@ -23,7 +23,13 @@ final class MetronomeEngine {
     private var nextBeatHostTime: UInt64 = 0
     private var sampleRate: Double { audioFormat.sampleRate }
 
-    // MARK: - State
+    // MARK: - Internal transport state (accessed only on schedulerQueue)
+
+    private let schedulerQueue = DispatchQueue(label: "com.tempo.scheduler", qos: .userInteractive)
+    private var isRunning = false   // source of truth for start/stop guard
+    private var nextBeatIndex = 0   // internal beat counter
+
+    // MARK: - Observable state (UI mirror)
 
     private let state: MetronomeState
 
@@ -45,50 +51,61 @@ final class MetronomeEngine {
     // MARK: - Public API
 
     func start() {
-        guard !state.isPlaying else { return }
+        schedulerQueue.async { [weak self] in
+            guard let self, !self.isRunning else { return }
+            self.isRunning = true
 
-        do {
-            try engine.start()
-        } catch {
-            return
-        }
+            do {
+                try self.engine.start()
+            } catch {
+                self.isRunning = false
+                return
+            }
 
-        playerNode.play()
+            self.playerNode.play()
 
-        // Schedule the first beat immediately
-        let now = AVAudioTime(hostTime: mach_absolute_time())
-        nextBeatHostTime = now.hostTime
+            // Seed the first beat slightly in the future for sample-accurate playback
+            self.nextBeatHostTime = mach_absolute_time() + self.secondsToHostTicks(self.schedulerInterval)
+            self.nextBeatIndex = 0
 
-        scheduleBeats()
-        startSchedulerTimer()
+            self.scheduleBeats()
+            self.startSchedulerTimer()
 
-        DispatchQueue.main.async { [weak self] in
-            self?.state.isPlaying = true
+            DispatchQueue.main.async { [weak self] in
+                self?.state.isPlaying = true
+            }
         }
     }
 
     func stop() {
-        schedulerTimer?.cancel()
-        schedulerTimer = nil
+        schedulerQueue.async { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.isRunning = false
 
-        playerNode.stop()
-        engine.stop()
+            self.schedulerTimer?.cancel()
+            self.schedulerTimer = nil
+            self.nextBeatIndex = 0
 
-        DispatchQueue.main.async { [weak self] in
-            self?.state.isPlaying = false
-            self?.state.currentBeat = 0
+            self.playerNode.stop()
+            self.engine.stop()
+
+            DispatchQueue.main.async { [weak self] in
+                self?.state.isPlaying = false
+                self?.state.currentBeat = 0
+            }
         }
     }
 
     func updateBPM(_ bpm: Double) {
         state.bpm = min(300, max(20, bpm))
-        // Ongoing scheduling uses state.bpm directly, so no restart needed
+        // Ongoing scheduling reads state.bpm directly, so no restart needed
     }
 
     // MARK: - Scheduling
 
     private func startSchedulerTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInteractive))
+        // Must be called on schedulerQueue
+        let timer = DispatchSource.makeTimerSource(queue: schedulerQueue)
         timer.schedule(deadline: .now(), repeating: schedulerInterval)
         timer.setEventHandler { [weak self] in
             self?.scheduleBeats()
@@ -98,29 +115,24 @@ final class MetronomeEngine {
     }
 
     private func scheduleBeats() {
+        // Runs on schedulerQueue — reads/writes only internal properties
         let secondsPerBeat = 60.0 / state.bpm
         let beatDurationHostTicks = secondsToHostTicks(secondsPerBeat)
-        let lookAheadTicks = secondsToHostTicks(lookAheadDuration)
-        let nowTicks = mach_absolute_time()
-        let horizon = nowTicks + lookAheadTicks
+        let horizon = mach_absolute_time() + secondsToHostTicks(lookAheadDuration)
 
         while nextBeatHostTime < horizon {
+            let buffer = (nextBeatIndex == 0) ? accentBuffer! : normalBuffer!
             let beatTime = AVAudioTime(hostTime: nextBeatHostTime)
-            let buffer = (state.currentBeat == 0) ? accentBuffer! : normalBuffer!
-
             playerNode.scheduleBuffer(buffer, at: beatTime, options: [], completionHandler: nil)
 
-            let beatIndex = state.currentBeat
+            // Mirror current beat index to UI — capture before advancing
+            let beatToDisplay = nextBeatIndex
             DispatchQueue.main.async { [weak self] in
-                self?.state.currentBeat = beatIndex
+                self?.state.currentBeat = beatToDisplay
             }
 
-            // Advance to next beat
-            nextBeatHostTime = nextBeatHostTime + beatDurationHostTicks
-            let nextBeat = (state.currentBeat + 1) % state.beatsPerBar
-            DispatchQueue.main.async { [weak self] in
-                self?.state.currentBeat = nextBeat
-            }
+            nextBeatHostTime += beatDurationHostTicks
+            nextBeatIndex = (nextBeatIndex + 1) % state.beatsPerBar
         }
     }
 
