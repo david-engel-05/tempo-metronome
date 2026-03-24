@@ -31,6 +31,10 @@ final class MetronomeEngine {
     private var isRunning = false   // source of truth for start/stop guard
     private var nextBeatIndex = 0   // internal beat counter
 
+    // MARK: - Tap Tempo
+
+    @ObservationIgnored private var tapTimestamps: [Date] = []
+
     // MARK: - Observable state (UI mirror)
 
     private let state: MetronomeState
@@ -148,6 +152,29 @@ final class MetronomeEngine {
     func updateBPM(_ bpm: Double) {
         state.bpm = min(300, max(20, bpm))
         // Ongoing scheduling reads state.bpm directly, so no restart needed
+    }
+
+    func recordTap() {
+        let now = Date()
+
+        if let last = tapTimestamps.last, now.timeIntervalSince(last) > 2.0 {
+            tapTimestamps.removeAll()
+        }
+
+        tapTimestamps.append(now)
+
+        if tapTimestamps.count > 8 {
+            tapTimestamps.removeFirst()
+        }
+
+        guard tapTimestamps.count >= 2 else { return }
+
+        var totalInterval: Double = 0
+        for i in 1..<tapTimestamps.count {
+            totalInterval += tapTimestamps[i].timeIntervalSince(tapTimestamps[i - 1])
+        }
+        let averageInterval = totalInterval / Double(tapTimestamps.count - 1)
+        updateBPM(60.0 / averageInterval)
     }
 
     // MARK: - Scheduling
