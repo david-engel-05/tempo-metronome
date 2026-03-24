@@ -1,6 +1,7 @@
 import AVFAudio
 import Observation
 
+@Observable
 final class MetronomeEngine {
 
     // MARK: - Configuration
