@@ -7,11 +7,13 @@ struct BPMControlView: View {
     @State private var isEditingBPM = false
     @State private var bpmInput = ""
     @FocusState private var inputFocused: Bool
+    @State private var tapScale: Double = 1.0
 
     var body: some View {
         VStack(spacing: 24) {
             bpmDisplay
             stepperAndSlider
+            tapTempoButton
         }
     }
 
@@ -69,6 +71,25 @@ struct BPMControlView: View {
                 .frame(width: 44, height: 44)
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Tap Tempo
+
+    private var tapTempoButton: some View {
+        Button {
+            engine.recordTap()
+            withAnimation(.easeOut(duration: 0.1)) { tapScale = 0.93 }
+            withAnimation(.easeOut(duration: 0.1).delay(0.1)) { tapScale = 1.0 }
+        } label: {
+            Text("TAP")
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .scaleEffect(tapScale)
         }
         .buttonStyle(.plain)
     }
