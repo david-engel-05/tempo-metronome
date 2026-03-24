@@ -121,14 +121,15 @@ final class MetronomeEngine {
         let horizon = mach_absolute_time() + secondsToHostTicks(lookAheadDuration)
 
         while nextBeatHostTime < horizon {
-            let buffer = (nextBeatIndex == 0) ? accentBuffer! : normalBuffer!
             let beatTime = AVAudioTime(hostTime: nextBeatHostTime)
-            playerNode.scheduleBuffer(buffer, at: beatTime, options: [], completionHandler: nil)
+            let buffer = (nextBeatIndex == 0) ? accentBuffer! : normalBuffer!
+            let beatIndex = nextBeatIndex
 
-            // Mirror current beat index to UI — capture before advancing
-            let beatToDisplay = nextBeatIndex
-            DispatchQueue.main.async { [weak self] in
-                self?.state.currentBeat = beatToDisplay
+            playerNode.scheduleBuffer(buffer, at: beatTime, options: []) { [weak self] in
+                guard let self, self.isRunning else { return }
+                DispatchQueue.main.async {
+                    self.state.currentBeat = beatIndex
+                }
             }
 
             nextBeatHostTime += beatDurationHostTicks
