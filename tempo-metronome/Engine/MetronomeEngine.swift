@@ -1,5 +1,6 @@
 import AVFAudio
 import Observation
+import UIKit
 
 @Observable
 final class MetronomeEngine {
@@ -47,6 +48,53 @@ final class MetronomeEngine {
 
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+
+        configureAudioSession()
+        observeInterruptions()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Audio Session
+
+    private func configureAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+        } catch {
+            // Audio session setup failed — app will still work but may use wrong output
+        }
+    }
+
+    private func observeInterruptions() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        switch type {
+        case .began:
+            stop()
+        case .ended:
+            // Only auto-resume if the system says it's okay to do so
+            if let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt,
+               AVAudioSession.InterruptionOptions(rawValue: optionsValue).contains(.shouldResume) {
+                try? AVAudioSession.sharedInstance().setActive(true)
+            }
+        @unknown default:
+            break
+        }
     }
 
     // MARK: - Public API
